@@ -163,7 +163,7 @@ contract FairAuction is Ownable, ReentrancyGuard {
       SALE_TOKEN.safeTransferFrom(msg.sender, address(this), refShareAmount);
 
       referrer.refEarnings = referrer.refEarnings.add(refShareAmount);
-      uint256 participationAmount = participationAmount.sub(refShareAmount);
+      participationAmount = participationAmount.sub(refShareAmount);
 
       emit NewRefEarning(referralAddress, refShareAmount);
     }
