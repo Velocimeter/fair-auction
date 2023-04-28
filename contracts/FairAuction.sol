@@ -190,11 +190,11 @@ contract FairAuction is Ownable, ReentrancyGuard {
 
     emit Buy(msg.sender, amount);
     // transfer Velocimeter's share
-    uint256 velocimeterAmount = participationAmount * VELOCIMETER_SHARE / 100;
+    uint256 velocimeterAmount = participationAmount.mul(VELOCIMETER_SHARE).div(100);
     SALE_TOKEN.safeTransferFrom(msg.sender, TANK, velocimeterAmount);
     
     // transfer contribution to treasury
-    participationAmount = participationAmount - velocimeterAmount;
+    participationAmount = participationAmount.sub(velocimeterAmount);
     SALE_TOKEN.safeTransferFrom(msg.sender, treasury, participationAmount);
   }
 
