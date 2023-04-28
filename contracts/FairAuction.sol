@@ -30,12 +30,13 @@ contract FairAuction is Ownable, ReentrancyGuard {
   IERC20 public immutable PROJECT_TOKEN; // Project token contract
   IEsManager public immutable PROJECT_ES_MANAGER; // Project EsToken manager contract
   IERC20 public immutable SALE_TOKEN; // token used to participate
-  IERC20 public immutable LP_TOKEN; // Project LP address
 
   uint256 public immutable START_TIME; // sale start time
   uint256 public immutable END_TIME; // sale end time
 
   uint256 public constant REFERRAL_SHARE = 3; // 3%
+  uint256 public constant VELOCIMETER_SHARE = 1; //1%
+  address public constant TANK = 0x0A868fd1523a1ef58Db1F2D135219F0e30CBf7FB;
 
   mapping(address => UserInfo) public userInfo; // buyers and referrers info
   uint256 public totalRaised; // raised amount, does not take into account referral shares
@@ -49,14 +50,13 @@ contract FairAuction is Ownable, ReentrancyGuard {
   bool public unsoldTokensBurnt;
 
 
-  constructor(IERC20 projectToken, IEsManager projectEsManager, IERC20 saleToken, IERC20 lpToken, uint256 startTime, uint256 endTime, address treasury_, uint256 maxToDistribute, uint256 minToRaise) {
+  constructor(IERC20 projectToken, IEsManager projectEsManager, IERC20 saleToken, uint256 startTime, uint256 endTime, address treasury_, uint256 maxToDistribute, uint256 minToRaise) {
     require(startTime < endTime, "invalid dates");
     require(treasury_ != address(0), "invalid treasury");
 
     PROJECT_TOKEN = projectToken;
     PROJECT_ES_MANAGER = projectEsManager;
     SALE_TOKEN = saleToken;
-    LP_TOKEN = lpToken;
     START_TIME = startTime;
     END_TIME = endTime;
     treasury = treasury_;
@@ -156,7 +156,7 @@ contract FairAuction is Ownable, ReentrancyGuard {
   function buy(uint256 amount, address referralAddress) external isSaleActive nonReentrant {
     require(amount > 0, "buy: zero amount");
 
-    uint256 participationAmount = amount;
+    uint256 preParticipationAmount = amount;
     UserInfo storage user = userInfo[msg.sender];
 
     // handle user's referral
@@ -174,7 +174,7 @@ contract FairAuction is Ownable, ReentrancyGuard {
       SALE_TOKEN.safeTransferFrom(msg.sender, address(this), refShareAmount);
 
       referrer.refEarnings = referrer.refEarnings.add(refShareAmount);
-      participationAmount = participationAmount.sub(refShareAmount);
+      uint256 preParticipationAmount = participationAmount.sub(refShareAmount);
 
       emit NewRefEarning(referralAddress, refShareAmount);
     }
@@ -200,7 +200,12 @@ contract FairAuction is Ownable, ReentrancyGuard {
     totalAllocation = totalAllocation.add(allocation);
 
     emit Buy(msg.sender, amount);
+    // transfer Velocimeter's share
+    uint256 velocimeterAmount = preParticipationAmount * VELOCIMETER_SHARE / 100;
+    SALE_TOKEN.safeTransferFrom(msg.sender, TANK, velocimeterAmount);
+    
     // transfer contribution to treasury
+    participationAmount = preParticipationAmount - velocimeterAmount;
     SALE_TOKEN.safeTransferFrom(msg.sender, treasury, participationAmount);
   }
 
