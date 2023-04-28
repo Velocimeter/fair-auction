@@ -89,17 +89,6 @@ contract FairAuction is Ownable, ReentrancyGuard {
     _;
   }
 
-  /**
-   * @dev Check whether users can claim their purchased PROJECT_TOKEN
-   *
-   * Sale must have ended, and LP tokens must have been formed
-   */
-  modifier isClaimable(){
-    require(hasEnded(), "isClaimable: sale has not ended");
-    require(LP_TOKEN.totalSupply() > 0, "isClaimable: no LP tokens");
-    _;
-  }
-
   /**************************************************/
   /****************** PUBLIC VIEWS ******************/
   /**************************************************/
@@ -227,7 +216,7 @@ contract FairAuction is Ownable, ReentrancyGuard {
   /**
    * @dev Claim purchased PROJECT_TOKEN during the sale
    */
-  function claim() external isClaimable {
+  function claim() external {
     UserInfo storage user = userInfo[msg.sender];
 
     require(totalAllocation > 0 && user.allocation > 0, "claim: zero allocation");
