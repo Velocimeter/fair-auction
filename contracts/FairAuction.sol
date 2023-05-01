@@ -9,6 +9,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
 
 import "./interfaces/IEsManager.sol";
+import "./interfaces/ITurnstile.sol";
 
 contract FairAuction is Ownable, ReentrancyGuard {
   using SafeMath for uint256;
@@ -37,6 +38,7 @@ contract FairAuction is Ownable, ReentrancyGuard {
   uint256 public constant REFERRAL_SHARE = 3; // 3%
   uint256 public constant VELOCIMETER_SHARE = 1; //1%
   address public constant TANK = 0x0A868fd1523a1ef58Db1F2D135219F0e30CBf7FB;
+  address public constant TURNSTILE = 0xEcf044C5B4b867CFda001101c617eCd347095B44;
 
   mapping(address => UserInfo) public userInfo; // buyers and referrers info
   uint256 public totalRaised; // raised amount, does not take into account referral shares
@@ -51,7 +53,7 @@ contract FairAuction is Ownable, ReentrancyGuard {
   bool public unsoldTokensDealt;
 
 
-  constructor(IERC20 projectToken, IEsManager projectEsManager, IERC20 saleToken, uint256 startTime, uint256 endTime, address treasury_, uint256 maxToDistribute, uint256 minToRaise, uint256 maxToRaise) {
+  constructor(IERC20 projectToken, IEsManager projectEsManager, IERC20 saleToken, uint256 startTime, uint256 endTime, address treasury_, uint256 maxToDistribute, uint256 minToRaise, uint256 maxToRaise, uint256 csrNftId) {
     require(startTime < endTime, "invalid dates");
     require(treasury_ != address(0), "invalid treasury");
 
@@ -64,6 +66,8 @@ contract FairAuction is Ownable, ReentrancyGuard {
     MAX_PROJECT_TOKENS_TO_DISTRIBUTE = maxToDistribute;
     MIN_TOTAL_RAISED_FOR_MAX_PROJECT_TOKEN = minToRaise;
     MAX_RAISE = maxToRaise;
+
+    ITurnstile(TURNSTILE).assign(csrNftId);
   }
 
   /********************************************/
