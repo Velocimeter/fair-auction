@@ -86,10 +86,19 @@ contract FairAuction is Ownable, ReentrancyGuard {
    *
    * Will be marked as inactive if PROJECT_TOKEN has not been deposited into the contract
    */
-  modifier isSaleActive() {
-    require(hasStarted() && !hasEnded() && PROJECT_TOKEN.balanceOf(address(this)).add(PROJECT_ES_MANAGER.balanceOf(address(this))) >= MAX_PROJECT_TOKENS_TO_DISTRIBUTE, "isActive: sale is not active");
-    _;
-  }
+    modifier isSaleActive() {
+        require(
+            hasStarted() &&
+                !hasEnded() &&
+                PROJECT_TOKEN.balanceOf(address(this)).add(
+                    PROJECT_ES_MANAGER.balanceOf(address(this))
+                ) >=
+                MAX_PROJECT_TOKENS_TO_DISTRIBUTE &&
+                totalRaised < MAX_RAISE,
+            "isActive: sale is not active"
+        );
+        _;
+    }
 
   /**************************************************/
   /****************** PUBLIC VIEWS ******************/
@@ -120,7 +129,7 @@ contract FairAuction is Ownable, ReentrancyGuard {
   /**
   * @dev Returns the amount of PROJECT_TOKEN to be distributed based on the current total raised
   */
-  function tokensToDistribute() public view returns (uint256){
+  function tokensToDistribute() public view returns (uint256){ 
     if (MIN_TOTAL_RAISED_FOR_MAX_PROJECT_TOKEN > totalRaised) {
       return MAX_PROJECT_TOKENS_TO_DISTRIBUTE.mul(totalRaised).div(MIN_TOTAL_RAISED_FOR_MAX_PROJECT_TOKEN);
     }
@@ -219,7 +228,7 @@ contract FairAuction is Ownable, ReentrancyGuard {
    * @dev Claim purchased PROJECT_TOKEN during the sale
    */
   function claim() external {
-    require(hasEnded() || totalRaised >= MAX_RAISE, "isClaimable: sale has not ended");
+    require(hasEnded(), "isClaimable: sale has not ended");
     UserInfo storage user = userInfo[msg.sender];
 
     require(totalAllocation > 0 && user.allocation > 0, "claim: zero allocation");
