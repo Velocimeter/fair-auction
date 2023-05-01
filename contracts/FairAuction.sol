@@ -217,6 +217,7 @@ contract FairAuction is Ownable, ReentrancyGuard {
    * @dev Claim purchased PROJECT_TOKEN during the sale
    */
   function claim() external {
+    require(hasEnded(), "isClaimable: sale has not ended");
     UserInfo storage user = userInfo[msg.sender];
 
     require(totalAllocation > 0 && user.allocation > 0, "claim: zero allocation");
