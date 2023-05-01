@@ -44,6 +44,7 @@ contract FairAuction is Ownable, ReentrancyGuard {
 
   uint256 public immutable MAX_PROJECT_TOKENS_TO_DISTRIBUTE; // max PROJECT_TOKEN amount to distribute during the sale
   uint256 public immutable MIN_TOTAL_RAISED_FOR_MAX_PROJECT_TOKEN; // amount to reach to distribute max PROJECT_TOKEN amount
+  uint256 public immutable MAX_RAISE; 
 
   address public immutable treasury; // treasury multisig, will receive raised amount
 
@@ -218,7 +219,7 @@ contract FairAuction is Ownable, ReentrancyGuard {
    * @dev Claim purchased PROJECT_TOKEN during the sale
    */
   function claim() external {
-    require(hasEnded() || totalRaised >= MAX_RAISED, "isClaimable: sale has not ended");
+    require(hasEnded() || totalRaised >= MAX_RAISE, "isClaimable: sale has not ended");
     UserInfo storage user = userInfo[msg.sender];
 
     require(totalAllocation > 0 && user.allocation > 0, "claim: zero allocation");
@@ -294,7 +295,7 @@ contract FairAuction is Ownable, ReentrancyGuard {
 
     PROJECT_ES_MANAGER.transfer(0x000000000000000000000000000000000000dEaD, unsoldAmount.div(2));
     PROJECT_TOKEN.transfer(0x000000000000000000000000000000000000dEaD, unsoldAmount.div(2));
-  
+  }
   /**
    * @dev Return unsold PROJECT_TOKEN if MIN_TOTAL_RAISED_FOR_MAX_PROJECT_TOKEN has not been reached
    *
@@ -314,7 +315,7 @@ contract FairAuction is Ownable, ReentrancyGuard {
     PROJECT_ES_MANAGER.transfer(treasury, unsoldAmount.div(2));
     PROJECT_TOKEN.transfer(treasury, unsoldAmount.div(2));
   }
-  }
+  
 
   /********************************************************/
   /****************** INTERNAL FUNCTIONS ******************/
