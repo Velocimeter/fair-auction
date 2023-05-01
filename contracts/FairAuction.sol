@@ -47,10 +47,10 @@ contract FairAuction is Ownable, ReentrancyGuard {
 
   address public immutable treasury; // treasury multisig, will receive raised amount
 
-  bool public unsoldTokensBurnt;
+  bool public unsoldTokensDealt;
 
 
-  constructor(IERC20 projectToken, IEsManager projectEsManager, IERC20 saleToken, uint256 startTime, uint256 endTime, address treasury_, uint256 maxToDistribute, uint256 minToRaise) {
+  constructor(IERC20 projectToken, IEsManager projectEsManager, IERC20 saleToken, uint256 startTime, uint256 endTime, address treasury_, uint256 maxToDistribute, uint256 minToRaise, uint256 maxToRaise) {
     require(startTime < endTime, "invalid dates");
     require(treasury_ != address(0), "invalid treasury");
 
@@ -62,6 +62,7 @@ contract FairAuction is Ownable, ReentrancyGuard {
     treasury = treasury_;
     MAX_PROJECT_TOKENS_TO_DISTRIBUTE = maxToDistribute;
     MIN_TOTAL_RAISED_FOR_MAX_PROJECT_TOKEN = minToRaise;
+    MAX_RAISE = maxToRaise;
   }
 
   /********************************************/
@@ -217,7 +218,7 @@ contract FairAuction is Ownable, ReentrancyGuard {
    * @dev Claim purchased PROJECT_TOKEN during the sale
    */
   function claim() external {
-    require(hasEnded(), "isClaimable: sale has not ended");
+    require(hasEnded() || totalRaised >= MAX_RAISED, "isClaimable: sale has not ended");
     UserInfo storage user = userInfo[msg.sender];
 
     require(totalAllocation > 0 && user.allocation > 0, "claim: zero allocation");
@@ -282,17 +283,37 @@ contract FairAuction is Ownable, ReentrancyGuard {
    */
   function burnUnsoldTokens() external onlyOwner {
     require(hasEnded(), "burnUnsoldTokens: presale has not ended");
-    require(!unsoldTokensBurnt, "burnUnsoldTokens: already burnt");
+    require(!unsoldTokensDealt, "burnUnsoldTokens: already burnt");
 
     uint256 totalSold = tokensToDistribute();
     require(totalSold < MAX_PROJECT_TOKENS_TO_DISTRIBUTE, "burnUnsoldTokens: no token to burn");
 
-    unsoldTokensBurnt = true;
+    unsoldTokensDealt = true;
 
     uint256 unsoldAmount = MAX_PROJECT_TOKENS_TO_DISTRIBUTE.sub(totalSold);
 
     PROJECT_ES_MANAGER.transfer(0x000000000000000000000000000000000000dEaD, unsoldAmount.div(2));
     PROJECT_TOKEN.transfer(0x000000000000000000000000000000000000dEaD, unsoldAmount.div(2));
+  
+  /**
+   * @dev Return unsold PROJECT_TOKEN if MIN_TOTAL_RAISED_FOR_MAX_PROJECT_TOKEN has not been reached
+   *
+   * Must only be called by the owner
+   */
+  function returnUnsoldTokens() external onlyOwner {
+    require(hasEnded(), "returnUnsoldTokens: presale has not ended");
+    require(!unsoldTokensDealt, "returnUnsoldTokens: already burnt");
+
+    uint256 totalSold = tokensToDistribute();
+    require(totalSold < MAX_PROJECT_TOKENS_TO_DISTRIBUTE, "returnUnsoldTokens: no token to burn");
+
+    unsoldTokensDealt = true;
+
+    uint256 unsoldAmount = MAX_PROJECT_TOKENS_TO_DISTRIBUTE.sub(totalSold);
+
+    PROJECT_ES_MANAGER.transfer(treasury, unsoldAmount.div(2));
+    PROJECT_TOKEN.transfer(treasury, unsoldAmount.div(2));
+  }
   }
 
   /********************************************************/
