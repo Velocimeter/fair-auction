@@ -10,7 +10,7 @@ import "@openzeppelin/contracts/math/SafeMath.sol";
 
 import "./interfaces/ITurnstile.sol";
 
-contract FairAuction is Ownable, ReentrancyGuard {
+contract FairAuctionNoES is Ownable, ReentrancyGuard {
   using SafeMath for uint256;
   using SafeERC20 for IERC20;
 
