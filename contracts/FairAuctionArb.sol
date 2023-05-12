@@ -8,10 +8,9 @@ import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
 
-import "./interfaces/IEsManager.sol";
 import "./interfaces/ITurnstile.sol";
 
-contract FairAuctionOld is Ownable, ReentrancyGuard {
+contract FairAuctionArb is Ownable, ReentrancyGuard {
   using SafeMath for uint256;
   using SafeERC20 for IERC20;
 
@@ -29,7 +28,6 @@ contract FairAuctionOld is Ownable, ReentrancyGuard {
   }
 
   IERC20 public immutable PROJECT_TOKEN; // Project token contract
-  IEsManager public immutable PROJECT_ES_MANAGER; // Project EsToken manager contract
   IERC20 public immutable SALE_TOKEN; // token used to participate
 
   uint256 public immutable START_TIME; // sale start time
@@ -39,6 +37,7 @@ contract FairAuctionOld is Ownable, ReentrancyGuard {
   uint256 public constant VELOCIMETER_SHARE = 1; //1%
   address public constant TANK = 0x0A868fd1523a1ef58Db1F2D135219F0e30CBf7FB;
   address public constant TURNSTILE = 0xEcf044C5B4b867CFda001101c617eCd347095B44;
+
 
   mapping(address => UserInfo) public userInfo; // buyers and referrers info
   uint256 public totalRaised; // raised amount, does not take into account referral shares
@@ -53,12 +52,11 @@ contract FairAuctionOld is Ownable, ReentrancyGuard {
   bool public unsoldTokensDealt;
 
 
-  constructor(IERC20 projectToken, IEsManager projectEsManager, IERC20 saleToken, uint256 startTime, uint256 endTime, address treasury_, uint256 maxToDistribute, uint256 minToRaise, uint256 maxToRaise, uint256 csrNftId) {
+  constructor(IERC20 projectToken, IERC20 saleToken, uint256 startTime, uint256 endTime, address treasury_, uint256 maxToDistribute, uint256 minToRaise, uint256 maxToRaise) {
     require(startTime < endTime, "invalid dates");
     require(treasury_ != address(0), "invalid treasury");
 
     PROJECT_TOKEN = projectToken;
-    PROJECT_ES_MANAGER = projectEsManager;
     SALE_TOKEN = saleToken;
     START_TIME = startTime;
     END_TIME = endTime;
@@ -66,8 +64,6 @@ contract FairAuctionOld is Ownable, ReentrancyGuard {
     MAX_PROJECT_TOKENS_TO_DISTRIBUTE = maxToDistribute;
     MIN_TOTAL_RAISED_FOR_MAX_PROJECT_TOKEN = minToRaise;
     MAX_RAISE = maxToRaise;
-
-    ITurnstile(TURNSTILE).assign(csrNftId);
   }
 
   /********************************************/
@@ -90,19 +86,18 @@ contract FairAuctionOld is Ownable, ReentrancyGuard {
    *
    * Will be marked as inactive if PROJECT_TOKEN has not been deposited into the contract
    */
-    modifier isSaleActive() {
-        require(
-            hasStarted() &&
-                !hasEnded() &&
-                PROJECT_TOKEN.balanceOf(address(this)).add(
-                    PROJECT_ES_MANAGER.balanceOf(address(this))
-                ) >=
-                MAX_PROJECT_TOKENS_TO_DISTRIBUTE &&
-                totalRaised < MAX_RAISE,
-            "isActive: sale is not active"
-        );
-        _;
-    }
+  modifier isSaleActive() {
+    require(
+      hasStarted() && 
+            !hasEnded() && 
+            PROJECT_TOKEN.balanceOf(address(this)) 
+              >= 
+              MAX_PROJECT_TOKENS_TO_DISTRIBUTE &&
+              totalRaised < MAX_RAISE, 
+              "isActive: sale is not active"
+    );
+    _;
+  }
 
   /**************************************************/
   /****************** PUBLIC VIEWS ******************/
@@ -133,7 +128,7 @@ contract FairAuctionOld is Ownable, ReentrancyGuard {
   /**
   * @dev Returns the amount of PROJECT_TOKEN to be distributed based on the current total raised
   */
-  function tokensToDistribute() public view returns (uint256){ 
+  function tokensToDistribute() public view returns (uint256){
     if (MIN_TOTAL_RAISED_FOR_MAX_PROJECT_TOKEN > totalRaised) {
       return MAX_PROJECT_TOKENS_TO_DISTRIBUTE.mul(totalRaised).div(MIN_TOTAL_RAISED_FOR_MAX_PROJECT_TOKEN);
     }
@@ -243,11 +238,8 @@ contract FairAuctionOld is Ownable, ReentrancyGuard {
 
     emit Claim(msg.sender, amount);
 
-    // send PROJECT_ES_TOKEN allocation
-    uint256 esAmount = amount.div(2);
-    IEsManager(PROJECT_ES_MANAGER).transfer(msg.sender, esAmount);
     // send PROJECT_TOKEN allocation
-    _safeClaimTransfer(msg.sender, amount.sub(esAmount));
+    _safeClaimTransfer(msg.sender, amount);
   }
 
   /****************************************************************/
@@ -306,8 +298,7 @@ contract FairAuctionOld is Ownable, ReentrancyGuard {
 
     uint256 unsoldAmount = MAX_PROJECT_TOKENS_TO_DISTRIBUTE.sub(totalSold);
 
-    PROJECT_ES_MANAGER.transfer(0x000000000000000000000000000000000000dEaD, unsoldAmount.div(2));
-    PROJECT_TOKEN.transfer(0x000000000000000000000000000000000000dEaD, unsoldAmount.div(2));
+    PROJECT_TOKEN.transfer(0x000000000000000000000000000000000000dEaD, unsoldAmount);
   }
   /**
    * @dev Return unsold PROJECT_TOKEN if MIN_TOTAL_RAISED_FOR_MAX_PROJECT_TOKEN has not been reached
@@ -325,8 +316,7 @@ contract FairAuctionOld is Ownable, ReentrancyGuard {
 
     uint256 unsoldAmount = MAX_PROJECT_TOKENS_TO_DISTRIBUTE.sub(totalSold);
 
-    PROJECT_ES_MANAGER.transfer(treasury, unsoldAmount.div(2));
-    PROJECT_TOKEN.transfer(treasury, unsoldAmount.div(2));
+    PROJECT_TOKEN.transfer(treasury, unsoldAmount);
   }
   
 

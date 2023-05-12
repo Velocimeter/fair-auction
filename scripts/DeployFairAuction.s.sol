@@ -5,7 +5,7 @@ import "forge-std/Script.sol";
 import {IFlow} from "contracts/interfaces/IFlow.sol";
 import {FairAuction} from "contracts/FairAuction.sol";
 
-contract DeployAutoBribe is Script {
+contract DeployFairAuction is Script {
     // token addresses
     address private constant FLOW = 0xB5b060055F0d1eF5174329913ef861bC3aDdF029;
     address private constant PROJECT_TOKEN = address(0);
