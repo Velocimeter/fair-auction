@@ -1,3 +1,5 @@
 # Foundry
 cache/
 artifacts/
+.env
+.env

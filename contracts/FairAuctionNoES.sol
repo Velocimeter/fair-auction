@@ -52,7 +52,7 @@ contract FairAuctionNoES is Ownable, ReentrancyGuard {
   bool public unsoldTokensDealt;
 
 
-  constructor(IERC20 projectToken, IERC20 saleToken, uint256 startTime, uint256 endTime, address treasury_, uint256 maxToDistribute, uint256 minToRaise, uint256 maxToRaise, uint256 csrNftId) {
+  constructor(IERC20 projectToken, IERC20 saleToken, uint256 startTime, uint256 endTime, address treasury_, uint256 maxToDistribute, uint256 minToRaise, uint256 maxToRaise) {
     require(startTime < endTime, "invalid dates");
     require(treasury_ != address(0), "invalid treasury");
 
@@ -65,7 +65,7 @@ contract FairAuctionNoES is Ownable, ReentrancyGuard {
     MIN_TOTAL_RAISED_FOR_MAX_PROJECT_TOKEN = minToRaise;
     MAX_RAISE = maxToRaise;
 
-    ITurnstile(TURNSTILE).assign(csrNftId);
+    
 
   }
 
