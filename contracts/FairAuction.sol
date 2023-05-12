@@ -7,67 +7,82 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
+import "./interfaces/IWETH.sol";
 
-import "./interfaces/IEsManager.sol";
-import "./interfaces/ITurnstile.sol";
 
 contract FairAuction is Ownable, ReentrancyGuard {
   using SafeMath for uint256;
   using SafeERC20 for IERC20;
+  using Address for address;
 
   struct UserInfo {
     uint256 allocation; // amount taken into account to obtain TOKEN (amount spent + discount)
     uint256 contribution; // amount spent to buy TOKEN
 
+    bool whitelisted;
+    uint256 whitelistCap;
+
     uint256 discount; // discount % for this user
     uint256 discountEligibleAmount; // max contribution amount eligible for a discount
 
-    address ref; // referral for this account
-    uint256 refEarnings; // referral earnings made by this account
-    uint256 claimedRefEarnings; // amount of claimed referral earnings
     bool hasClaimed; // has already claimed its allocation
   }
 
   IERC20 public immutable PROJECT_TOKEN; // Project token contract
-  IEsManager public immutable PROJECT_ES_MANAGER; // Project EsToken manager contract
+  IERC20 public immutable PROJECT_TOKEN_2; // Project token contract (eg. vested tokens)
   IERC20 public immutable SALE_TOKEN; // token used to participate
+  IERC20 public immutable LP_TOKEN; // Project LP address
 
   uint256 public immutable START_TIME; // sale start time
   uint256 public immutable END_TIME; // sale end time
 
-  uint256 public constant REFERRAL_SHARE = 3; // 3%
-  uint256 public constant VELOCIMETER_SHARE = 1; //1%
-  address public constant TANK = 0x0A868fd1523a1ef58Db1F2D135219F0e30CBf7FB;
-  address public constant TURNSTILE = 0xEcf044C5B4b867CFda001101c617eCd347095B44;
-
-  mapping(address => UserInfo) public userInfo; // buyers and referrers info
-  uint256 public totalRaised; // raised amount, does not take into account referral shares
+  mapping(address => UserInfo) public userInfo; // buyers info
+  uint256 public totalRaised; // raised amount
   uint256 public totalAllocation; // takes into account discounts
 
   uint256 public immutable MAX_PROJECT_TOKENS_TO_DISTRIBUTE; // max PROJECT_TOKEN amount to distribute during the sale
+  uint256 public immutable MAX_PROJECT_TOKENS_2_TO_DISTRIBUTE; // max PROJECT_TOKEN_2 amount to distribute during the sale
   uint256 public immutable MIN_TOTAL_RAISED_FOR_MAX_PROJECT_TOKEN; // amount to reach to distribute max PROJECT_TOKEN amount
-  uint256 public immutable MAX_RAISE; 
+
+  uint256 public immutable MAX_RAISE_AMOUNT;
+  uint256 public immutable CAP_PER_WALLET;
 
   address public immutable treasury; // treasury multisig, will receive raised amount
 
-  bool public unsoldTokensDealt;
+  bool public whitelistOnly;
+  bool public unsoldTokensWithdrew;
+
+  bool public forceClaimable; // safety measure to ensure that we can force claimable to true in case awaited LP token address plan change during the sale
+
+  address public weth = 0x82aF49447D8a07e3bd95BD0d56f35241523fBab1;
 
 
-  constructor(IERC20 projectToken, IEsManager projectEsManager, IERC20 saleToken, uint256 startTime, uint256 endTime, address treasury_, uint256 maxToDistribute, uint256 minToRaise, uint256 maxToRaise, uint256 csrNftId) {
+  constructor(
+    IERC20 projectToken, IERC20 projectToken2, IERC20 saleToken, IERC20 lpToken,
+    uint256 startTime, uint256 endTime, address treasury_,
+    uint256 maxToDistribute, uint256 maxToDistribute2, uint256 minToRaise, uint256 maxToRaise, uint256 capPerWallet
+  ) {
     require(startTime < endTime, "invalid dates");
     require(treasury_ != address(0), "invalid treasury");
 
     PROJECT_TOKEN = projectToken;
-    PROJECT_ES_MANAGER = projectEsManager;
+    PROJECT_TOKEN_2 = projectToken2;
     SALE_TOKEN = saleToken;
+    LP_TOKEN = lpToken;
     START_TIME = startTime;
     END_TIME = endTime;
     treasury = treasury_;
     MAX_PROJECT_TOKENS_TO_DISTRIBUTE = maxToDistribute;
+    MAX_PROJECT_TOKENS_2_TO_DISTRIBUTE = maxToDistribute2;
     MIN_TOTAL_RAISED_FOR_MAX_PROJECT_TOKEN = minToRaise;
-    MAX_RAISE = maxToRaise;
-
-    ITurnstile(TURNSTILE).assign(csrNftId);
+    if(maxToRaise == 0) {
+      maxToRaise = type(uint256).max;
+    }
+    MAX_RAISE_AMOUNT = maxToRaise;
+    if(capPerWallet == 0) {
+      capPerWallet = type(uint256).max;
+    }
+    CAP_PER_WALLET = capPerWallet;
   }
 
   /********************************************/
@@ -75,11 +90,11 @@ contract FairAuction is Ownable, ReentrancyGuard {
   /********************************************/
 
   event Buy(address indexed user, uint256 amount);
-  event ClaimRefEarnings(address indexed user, uint256 amount);
-  event Claim(address indexed user, uint256 amount);
-  event NewRefEarning(address referrer, uint256 amount);
+  event Claim(address indexed user, uint256 amount, uint256 amount2);
   event DiscountUpdated();
+  event WhitelistUpdated();
   event EmergencyWithdraw(address token, uint256 amount);
+  event SetWhitelistOnly(bool status);
 
   /***********************************************/
   /****************** MODIFIERS ******************/
@@ -90,19 +105,25 @@ contract FairAuction is Ownable, ReentrancyGuard {
    *
    * Will be marked as inactive if PROJECT_TOKEN has not been deposited into the contract
    */
-    modifier isSaleActive() {
-        require(
-            hasStarted() &&
-                !hasEnded() &&
-                PROJECT_TOKEN.balanceOf(address(this)).add(
-                    PROJECT_ES_MANAGER.balanceOf(address(this))
-                ) >=
-                MAX_PROJECT_TOKENS_TO_DISTRIBUTE &&
-                totalRaised < MAX_RAISE,
-            "isActive: sale is not active"
-        );
-        _;
+  modifier isSaleActive() {
+    require(hasStarted() && !hasEnded(), "isActive: sale is not active");
+    require(PROJECT_TOKEN.balanceOf(address(this)) >= MAX_PROJECT_TOKENS_TO_DISTRIBUTE, "isActive: sale not filled");
+    if(address(PROJECT_TOKEN_2) != address(0)) {
+        require(PROJECT_TOKEN_2.balanceOf(address(this)) >= MAX_PROJECT_TOKENS_2_TO_DISTRIBUTE, "isActive: sale not filled 2");
     }
+    _;
+  }
+
+  /**
+   * @dev Check whether users can claim their purchased PROJECT_TOKEN
+   *
+   * Sale must have ended, and LP tokens must have been formed
+   */
+  modifier isClaimable(){
+    require(hasEnded(), "isClaimable: sale has not ended");
+    require(forceClaimable || LP_TOKEN.totalSupply() > 0, "isClaimable: no LP tokens");
+    _;
+  }
 
   /**************************************************/
   /****************** PUBLIC VIEWS ******************/
@@ -133,7 +154,7 @@ contract FairAuction is Ownable, ReentrancyGuard {
   /**
   * @dev Returns the amount of PROJECT_TOKEN to be distributed based on the current total raised
   */
-  function tokensToDistribute() public view returns (uint256){ 
+  function projectTokensToDistribute() public view returns (uint256){
     if (MIN_TOTAL_RAISED_FOR_MAX_PROJECT_TOKEN > totalRaised) {
       return MAX_PROJECT_TOKENS_TO_DISTRIBUTE.mul(totalRaised).div(MIN_TOTAL_RAISED_FOR_MAX_PROJECT_TOKEN);
     }
@@ -141,49 +162,73 @@ contract FairAuction is Ownable, ReentrancyGuard {
   }
 
   /**
-  * @dev Get user share times 1e5
+  * @dev Returns the amount of PROJECT_TOKEN_2 to be distributed based on the current total raised
+  */
+  function projectTokens2ToDistribute() public view returns (uint256){
+    if(address(PROJECT_TOKEN_2) == address(0)) {
+      return 0;
+    }
+    if (MIN_TOTAL_RAISED_FOR_MAX_PROJECT_TOKEN > totalRaised) {
+      return MAX_PROJECT_TOKENS_2_TO_DISTRIBUTE.mul(totalRaised).div(MIN_TOTAL_RAISED_FOR_MAX_PROJECT_TOKEN);
+    }
+    return MAX_PROJECT_TOKENS_2_TO_DISTRIBUTE;
+  }
+
+  /**
+  * @dev Returns the amount of PROJECT_TOKEN + PROJECT_TOKEN_2 to be distributed based on the current total raised
+  */
+  function tokensToDistribute() public view returns (uint256){
+    return projectTokensToDistribute().add(projectTokens2ToDistribute());
+  }
+
+  /**
+  * @dev Get user tokens amount to claim
     */
-  function getExpectedClaimAmount(address account) public view returns (uint256) {
-    if(totalAllocation == 0) return 0;
+  function getExpectedClaimAmount(address account) public view returns (uint256 projectTokenAmount, uint256 projectToken2Amount) {
+    if(totalAllocation == 0) return (0, 0);
 
     UserInfo memory user = userInfo[account];
-    return user.allocation.mul(tokensToDistribute()).div(totalAllocation);
+    projectTokenAmount = user.allocation.mul(projectTokensToDistribute()).div(totalAllocation);
+    projectToken2Amount = user.allocation.mul(projectTokens2ToDistribute()).div(totalAllocation);
   }
 
   /****************************************************************/
   /****************** EXTERNAL PUBLIC FUNCTIONS  ******************/
   /****************************************************************/
 
-  /**
-   * @dev Purchase an allocation for the sale for a value of "amount" SALE_TOKEN, referred by "referralAddress"
-   */
-  function buy(uint256 amount, address referralAddress) external isSaleActive nonReentrant {
-    require(amount > 0, "buy: zero amount");
+  function buyETH() external isSaleActive nonReentrant payable {
+    require(address(SALE_TOKEN) == weth, "non ETH sale");
+    uint256 amount = msg.value;
+    IWETH(weth).deposit{value: amount}();
+    _buy(amount);
+  }
 
-    uint256 participationAmount = amount;
+/**
+ * @dev Purchase an allocation for the sale for a value of "amount" SALE_TOKEN
+   */
+  function buy(uint256 amount) external isSaleActive nonReentrant {
+    SALE_TOKEN.safeTransferFrom(msg.sender, address(this), amount);
+    _buy(amount);
+  }
+
+  function _buy(uint256 amount) internal {
+    require(amount > 0, "buy: zero amount");
+    require(totalRaised.add(amount) <= MAX_RAISE_AMOUNT, "buy: hardcap reached");
+    require(!address(msg.sender).isContract() && !address(tx.origin).isContract(), "FORBIDDEN");
+
     UserInfo storage user = userInfo[msg.sender];
 
-    // handle user's referral
-    if (user.allocation == 0 && user.ref == address(0) && referralAddress != address(0) && referralAddress != msg.sender) {
-      // If first buy, and does not have any ref already set
-      user.ref = referralAddress;
+    if(whitelistOnly) {
+      require(user.whitelisted, "buy: not whitelisted");
+      require(user.contribution.add(amount) <= user.whitelistCap, "buy: whitelist wallet cap reached");
     }
-    referralAddress = user.ref;
-
-    if (referralAddress != address(0)) {
-      UserInfo storage referrer = userInfo[referralAddress];
-
-      // compute and send referrer share
-      uint256 refShareAmount = REFERRAL_SHARE.mul(amount).div(100);
-      SALE_TOKEN.safeTransferFrom(msg.sender, address(this), refShareAmount);
-
-      referrer.refEarnings = referrer.refEarnings.add(refShareAmount);
-      participationAmount = participationAmount.sub(refShareAmount);
-
-      emit NewRefEarning(referralAddress, refShareAmount);
+    else{
+      uint256 userWalletCap = CAP_PER_WALLET > user.whitelistCap ? CAP_PER_WALLET : user.whitelistCap;
+      require(user.contribution.add(amount) <= userWalletCap, "buy: wallet cap reached");
     }
 
     uint256 allocation = amount;
+
     if (user.discount > 0 && user.contribution < user.discountEligibleAmount) {
 
       // Get eligible amount for the active user's discount
@@ -204,50 +249,32 @@ contract FairAuction is Ownable, ReentrancyGuard {
     totalAllocation = totalAllocation.add(allocation);
 
     emit Buy(msg.sender, amount);
-    // transfer Velocimeter's share
-    uint256 velocimeterAmount = participationAmount.mul(VELOCIMETER_SHARE).div(100);
-    SALE_TOKEN.safeTransferFrom(msg.sender, TANK, velocimeterAmount);
-    
     // transfer contribution to treasury
-    participationAmount = participationAmount.sub(velocimeterAmount);
-    SALE_TOKEN.safeTransferFrom(msg.sender, treasury, participationAmount);
-  }
-
-  /**
-   * @dev Claim referral earnings
-   */
-  function claimRefEarnings() public {
-    UserInfo storage user = userInfo[msg.sender];
-    uint256 toClaim = user.refEarnings.sub(user.claimedRefEarnings);
-
-    if(toClaim > 0){
-      user.claimedRefEarnings = user.claimedRefEarnings.add(toClaim);
-
-      emit ClaimRefEarnings(msg.sender, toClaim);
-      SALE_TOKEN.safeTransfer(msg.sender, toClaim);
-    }
+    SALE_TOKEN.safeTransfer(treasury, amount);
   }
 
   /**
    * @dev Claim purchased PROJECT_TOKEN during the sale
    */
-  function claim() external {
-    require(hasEnded(), "isClaimable: sale has not ended");
+  function claim() external isClaimable {
     UserInfo storage user = userInfo[msg.sender];
 
     require(totalAllocation > 0 && user.allocation > 0, "claim: zero allocation");
     require(!user.hasClaimed, "claim: already claimed");
     user.hasClaimed = true;
 
-    uint256 amount = getExpectedClaimAmount(msg.sender);
+    (uint256 token1Amount, uint256 token2Amount) = getExpectedClaimAmount(msg.sender);
 
-    emit Claim(msg.sender, amount);
+    emit Claim(msg.sender, token1Amount, token2Amount);
 
-    // send PROJECT_ES_TOKEN allocation
-    uint256 esAmount = amount.div(2);
-    IEsManager(PROJECT_ES_MANAGER).transfer(msg.sender, esAmount);
-    // send PROJECT_TOKEN allocation
-    _safeClaimTransfer(msg.sender, amount.sub(esAmount));
+    if(token1Amount > 0) {
+      // send PROJECT_TOKEN allocation
+      _safeClaimTransfer(PROJECT_TOKEN, msg.sender, token1Amount);
+    }
+    if(token2Amount > 0) {
+      // send PROJECT_TOKEN allocation
+      _safeClaimTransfer(PROJECT_TOKEN_2, msg.sender, token2Amount);
+    }
   }
 
   /****************************************************************/
@@ -277,6 +304,49 @@ contract FairAuction is Ownable, ReentrancyGuard {
     emit DiscountUpdated();
   }
 
+  struct WhitelistSettings {
+    address account;
+    bool whitelisted;
+    uint256 whitelistCap;
+  }
+
+  /**
+   * @dev Assign whitelist status and cap for users
+   */
+  function setUsersWhitelist(WhitelistSettings[] calldata users) public onlyOwner {
+    for (uint256 i = 0; i < users.length; ++i) {
+      WhitelistSettings memory userWhitelist = users[i];
+      UserInfo storage user = userInfo[userWhitelist.account];
+      user.whitelisted = userWhitelist.whitelisted;
+      user.whitelistCap = userWhitelist.whitelistCap;
+    }
+
+    emit WhitelistUpdated();
+  }
+
+  function setWhitelistOnly(bool value) external onlyOwner {
+    whitelistOnly = value;
+    emit SetWhitelistOnly(value);
+  }
+
+  /**
+   * @dev Withdraw unsold PROJECT_TOKEN + PROJECT_TOKEN_2 if MIN_TOTAL_RAISED_FOR_MAX_PROJECT_TOKEN has not been reached
+   *
+   * Must only be called by the owner
+   */
+  function withdrawUnsoldTokens() external onlyOwner {
+    require(hasEnded(), "withdrawUnsoldTokens: presale has not ended");
+    require(!unsoldTokensWithdrew, "withdrawUnsoldTokens: already burnt");
+
+    uint256 totalTokenSold = projectTokensToDistribute();
+    uint256 totalToken2Sold = projectTokens2ToDistribute();
+
+    unsoldTokensWithdrew = true;
+    if(totalTokenSold > 0) PROJECT_TOKEN.transfer(msg.sender, MAX_PROJECT_TOKENS_TO_DISTRIBUTE.sub(totalTokenSold));
+    if(totalToken2Sold > 0) PROJECT_TOKEN_2.transfer(msg.sender, MAX_PROJECT_TOKENS_2_TO_DISTRIBUTE.sub(totalToken2Sold));
+  }
+
+
   /********************************************************/
   /****************** /!\ EMERGENCY ONLY ******************/
   /********************************************************/
@@ -290,45 +360,9 @@ contract FairAuction is Ownable, ReentrancyGuard {
     emit EmergencyWithdraw(token, amount);
   }
 
-  /**
-   * @dev Burn unsold PROJECT_TOKEN if MIN_TOTAL_RAISED_FOR_MAX_PROJECT_TOKEN has not been reached
-   *
-   * Must only be called by the owner
-   */
-  function burnUnsoldTokens() external onlyOwner {
-    require(hasEnded(), "burnUnsoldTokens: presale has not ended");
-    require(!unsoldTokensDealt, "burnUnsoldTokens: already burnt");
-
-    uint256 totalSold = tokensToDistribute();
-    require(totalSold < MAX_PROJECT_TOKENS_TO_DISTRIBUTE, "burnUnsoldTokens: no token to burn");
-
-    unsoldTokensDealt = true;
-
-    uint256 unsoldAmount = MAX_PROJECT_TOKENS_TO_DISTRIBUTE.sub(totalSold);
-
-    PROJECT_ES_MANAGER.transfer(0x000000000000000000000000000000000000dEaD, unsoldAmount.div(2));
-    PROJECT_TOKEN.transfer(0x000000000000000000000000000000000000dEaD, unsoldAmount.div(2));
+  function setForceClaimable() external onlyOwner {
+    forceClaimable = true;
   }
-  /**
-   * @dev Return unsold PROJECT_TOKEN if MIN_TOTAL_RAISED_FOR_MAX_PROJECT_TOKEN has not been reached
-   *
-   * Must only be called by the owner
-   */
-  function returnUnsoldTokens() external onlyOwner {
-    require(hasEnded(), "returnUnsoldTokens: presale has not ended");
-    require(!unsoldTokensDealt, "returnUnsoldTokens: already burnt");
-
-    uint256 totalSold = tokensToDistribute();
-    require(totalSold < MAX_PROJECT_TOKENS_TO_DISTRIBUTE, "returnUnsoldTokens: no token to burn");
-
-    unsoldTokensDealt = true;
-
-    uint256 unsoldAmount = MAX_PROJECT_TOKENS_TO_DISTRIBUTE.sub(totalSold);
-
-    PROJECT_ES_MANAGER.transfer(treasury, unsoldAmount.div(2));
-    PROJECT_TOKEN.transfer(treasury, unsoldAmount.div(2));
-  }
-  
 
   /********************************************************/
   /****************** INTERNAL FUNCTIONS ******************/
@@ -337,14 +371,14 @@ contract FairAuction is Ownable, ReentrancyGuard {
   /**
    * @dev Safe token transfer function, in case rounding error causes contract to not have enough tokens
    */
-  function _safeClaimTransfer(address to, uint256 amount) internal {
-    uint256 balance = PROJECT_TOKEN.balanceOf(address(this));
+  function _safeClaimTransfer(IERC20 token, address to, uint256 amount) internal {
+    uint256 balance = token.balanceOf(address(this));
     bool transferSuccess = false;
 
     if (amount > balance) {
-      transferSuccess = PROJECT_TOKEN.transfer(to, balance);
+      transferSuccess = token.transfer(to, balance);
     } else {
-      transferSuccess = PROJECT_TOKEN.transfer(to, amount);
+      transferSuccess = token.transfer(to, amount);
     }
 
     require(transferSuccess, "safeClaimTransfer: Transfer failed");
