@@ -42,5 +42,6 @@ contract DeployAutoBribe is Script {
 
 //  forge script scripts/DeployAutoBribe.s.sol:DeployAutoBribe --rpc-url https://mainnode.plexnode.org:8545 -vvv
 // forge script scripts/DeployAutoBribe.s.sol:DeployAutoBribe --rpc-url https://mainnode.plexnode.org:8545 -vvv --broadcast --slow
-// forge verify-contract --verifier blockscout --verifier-url https://tuber.build/api 0x98f04f3b3601106644089E5791117E702fb19BcD AutoBribe --chain-id 7700
+// forge verify-contract --verifier etherscan --verifier-url https://goerli.etherscan.io/api 0x98f04f3b3601106644089E5791117E702fb19BcD AutoBribe --chain-id 7700
 // forge script scripts/DeployFairAuctionNoEs.s.sol:DeployAutoBribe --rpc-url https://rpc.ankr.com/eth_goerli --chain-id 5 -vvv
+// forge verify-contract --verifier etherscan --verifier-url https://api-goerli.etherscan.io/api 0x80AEDb1d9dDf502CCF08B949165214E017d22c54 FairAuctionNoES --chain-id 5
