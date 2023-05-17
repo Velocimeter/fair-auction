@@ -8,8 +8,6 @@ import "@openzeppelin/contracts/token/ERC20/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
 
-import "./interfaces/ITurnstile.sol";
-
 contract FairAuctionGoer is Ownable, ReentrancyGuard {
   using SafeMath for uint256;
   using SafeERC20 for IERC20;
@@ -33,10 +31,9 @@ contract FairAuctionGoer is Ownable, ReentrancyGuard {
   uint256 public immutable START_TIME; // sale start time
   uint256 public immutable END_TIME; // sale end time
 
-  uint256 public constant REFERRAL_SHARE = 3; // 3%
+  uint256 public constant REFERRAL_SHARE = 0; // 0%
   uint256 public constant VELOCIMETER_SHARE = 1; //1%
-  address public constant TANK = 0x0A868fd1523a1ef58Db1F2D135219F0e30CBf7FB;
-  address public constant TURNSTILE = 0xEcf044C5B4b867CFda001101c617eCd347095B44;
+  address public constant VELOCIMETER_TREASURY = 0x0A868fd1523a1ef58Db1F2D135219F0e30CBf7FB;
 
 
   mapping(address => UserInfo) public userInfo; // buyers and referrers info
@@ -201,7 +198,7 @@ contract FairAuctionGoer is Ownable, ReentrancyGuard {
     emit Buy(msg.sender, amount);
     // transfer Velocimeter's share
     uint256 velocimeterAmount = participationAmount.mul(VELOCIMETER_SHARE).div(100);
-    SALE_TOKEN.safeTransferFrom(msg.sender, TANK, velocimeterAmount);
+    SALE_TOKEN.safeTransferFrom(msg.sender, VELOCIMETER_TREASURY, velocimeterAmount);
     
     // transfer contribution to treasury
     participationAmount = participationAmount.sub(velocimeterAmount);
